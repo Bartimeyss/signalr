@@ -1,0 +1,36 @@
+@page "/"
+@implements IDisposable
+@inject ReleasePulseState Pulse
+
+<PageTitle>Live Pulse</PageTitle>
+
+<main>
+    <h1>Live Pulse: релизный сигнал</h1>
+    <p>Открой эту страницу в нескольких вкладках и нажми кнопку в любой из них.</p>
+
+    <section>
+        <p>Проверок релиза подтверждено:</p>
+        <output>@Pulse.ConfirmedReleases</output>
+        <button @onclick="ConfirmRelease">Подтвердить проверку</button>
+    </section>
+
+    <p><strong>Что происходит:</strong> состояние хранится на .NET-сервере. Blazor Server
+    обновляет все открытые вкладки через своё SignalR-подключение.</p>
+</main>
+
+<style>
+    main { font-family: system-ui, sans-serif; max-width: 720px; margin: 72px auto; line-height: 1.5; }
+    section { padding: 24px; border: 1px solid #d7d7d7; border-radius: 12px; }
+    output { display: block; font-size: 4rem; font-weight: 700; margin: 8px 0 20px; }
+    button { padding: 10px 16px; font: inherit; cursor: pointer; }
+</style>
+
+@code {
+    protected override void OnInitialized() => Pulse.Changed += Refresh;
+
+    private void ConfirmRelease() => Pulse.ConfirmRelease();
+
+    private void Refresh() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Pulse.Changed -= Refresh;
+}
