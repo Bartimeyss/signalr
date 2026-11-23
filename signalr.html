@@ -1,198 +1,169 @@
 <!doctype html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <link rel="stylesheet" href="reveal/css/reveal.css">
     <link rel="stylesheet" href="reveal/css/theme/kontur-light.css" id="theme">
-    <!-- Theme used for syntax highlighting of code -->
     <link rel="stylesheet" href="reveal/css/highlight/idea-for-light.css">
-    <link rel="stylesheet" href="reveal/css/highlight/darkula-for-dark.css">
-    <!--[if lt IE 9]>
-    <script src="reveal/js/html5shiv.js"></script>
-    <![endif]-->
     <script defer src="reveal/js/head.min.js"></script>
     <script defer src="reveal/js/reveal.js"></script>
     <script defer src="reveal/initialize.js"></script>
-    <script defer src="reveal/js/d3.min.js"></script>
-
     <style>
-        .slides .center {
-	    text-align: center;
-        }
+        .slides .flow { font-size: .8em; line-height: 1.6; }
     </style>
-
     <title>SignalR и Blazor</title>
 </head>
 <body>
-
 <div class="reveal"><div class="slides">
 
 <section data-markdown><script type="text/template">
 
-# Передача данных от сервера к клиенту
+# SignalR и Blazor
+
+Как сделать веб-приложение, которое реагирует на события сразу
 
 </script></section>
 
 <section data-markdown><script type="text/template">
 
-## Проблема
+## Задача
 
-Нужно строить приложение, моментально реагирующие на изменения:
-- отправка новых сообщений;
-- получение статуса оплаты;
-- и т.д.
+Пользователь не должен ждать следующего обновления страницы, когда:
 
-***
+- пришло сообщение;
+- изменился статус платежа;
+- завершилась фоновая операция;
+- коллега изменил общий документ.
 
-## Зачем?
-
-Чтобы пользователь не пропустил важные события.
-
-***
-
-### Поллинг
-
-Постоянные запросы с небольшими промежутками между ними.
-
-<p><img src="assets/polling.png" width="500"></p>
-
-***
-
-### Long polling
-
-- запросы с большим таймаутом;
-- сервер отдаёт данные, когда появляются новые, либо отдаёт пустое сообщение по таймауту
-
-<p><img src="assets/longpolling.png" width="500"></p>
-
-***
-
-### Web sockets
-
-- Постоянное соединение с сервером
-- Бинарные и текстовые данные
-- Протокол WebSockets
-
-<p><img src="assets/websockets.png" width="500"></p>
-
-***
-
-### Server-sent events (EventSource)
-
-- Постоянное соединение с сервером
-- Только текстовые данные
-- Односторонняя связь
-- Протокол HTTP
+**Обычный HTTP хорошо отвечает на запрос. Но как серверу начать разговор первым?**
 
 </script></section>
 
 <section data-markdown><script type="text/template">
 
-# SignalR
-    
+## Способы получать обновления
+
+| Подход | Идея | Цена |
+| --- | --- | --- |
+| Polling | «Есть новости?» каждые N секунд | много пустых запросов |
+| Long polling | сервер ждёт событие внутри запроса | запрос надо постоянно открывать снова |
+| WebSocket | постоянный двусторонний канал | инфраструктура должна его поддерживать |
+| SSE | постоянный канал сервер → браузер | сообщения только в одну сторону |
+
 </script></section>
-    
+
 <section data-markdown><script type="text/template">
 
-## Что это
+## SignalR: что он берёт на себя
 
-Библиотека, предназначенная для использования с ASP.NET.
-Абстракция над 4 транспортами:
-- WebSockets (основной транспорт);
-- EventSource;
-- Long polling;
-- iframe с отдельным соединением (только для Internet Explorer)
+- выбирает транспорт: **WebSocket → SSE → long polling**;
+- держит подключение и умеет восстанавливаться;
+- сериализует сообщения;
+- даёт модель вызова методов между клиентом и сервером.
 
-***
+Не заменяет HTTP API: API остаётся для страниц, истории и CRUD.
+SignalR нужен для новых событий «прямо сейчас».
 
-## Зачем
-Чтобы не реализовывать самим использование транспортов, переключение между ними и реконнект.
+</script></section>
 
-***
+<section data-markdown><script type="text/template">
 
-Есть два варианта использования:
-- Persistent Connection (низкоуровневое управление);
-- хабы (абстракция над PC, поддерживает вызов команд как со стороны сервера, так и с клиента, описываются в виде классов с методами команд).
+## Hub — точка общения
 
-***
+<div class="flow">
 
-## Использование на стороне сервера
+Браузер вызывает `SendComment(user, message)` → `CommentsHub` →
+сервер рассылает `ReceiveComment(user, message)` всем нужным браузерам.
 
-```cs
-public class CommentsHub: Hub
+</div>
+
+```csharp
+public class CommentsHub : Hub
 {
-    public async Task SendComment(string user, string message)
-    {
-        await Clients.All.SendAsync("ReceiveComment", user, message).ConfigureAwait(false);
-    }
+    public Task SendComment(string user, string message) =>
+        Clients.All.SendAsync("ReceiveComment", user, message);
 }
-...
-services.AddSignalR();
-...
-endpoints.MapHub<ChatHub>("/chatHub");
 ```
 
-***
+`SendComment` — метод сервера. `ReceiveComment` — имя обработчика на клиенте.
 
-Клиенты есть на JavaScript и на C#
-</script></section>    
+</script></section>
 
+<section data-markdown><script type="text/template">
+
+## Встраиваем Hub в ASP.NET Core
+
+```csharp
+// ConfigureServices
+services.AddSignalR();
+
+// Configure → UseEndpoints
+endpoints.MapHub<CommentsHub>("/commentsHub");
+```
+
+В клиенте создаём подключение к `/commentsHub`, подписываемся на
+`ReceiveComment`, затем запускаем `connection.start()`.
+
+</script></section>
+
+<section data-markdown><script type="text/template">
+
+## Учебный чат — не production
+
+- `Clients.All` пошлёт комментарий пользователям **других новостей**.
+- Отправленный комментарий пока не сохранён в БД — после refresh исчезнет.
+- Hub не хранит состояние приложения.
+
+Следующий шаг в реальном сервисе: группа `news:{articleId}`, проверка прав,
+сохранение в БД и рассылка только после успешной записи.
+
+</script></section>
+
+<section data-markdown><script type="text/template">
+
+## Демо: посмотрим на протокол
+
+1. Открываем одну новость в двух вкладках.
+2. Отправляем комментарий в первой.
+3. Он появляется в обеих без reload.
+4. DevTools → **Network → WS**: смотрим кадры с `SendComment` и `ReceiveComment`.
+
+Это не магия: браузер держит подключение и обменивается сообщениями с Hub.
+
+</script></section>
 
 <section data-markdown><script type="text/template">
 
 # Blazor
-    
+
+Интерактивный веб-интерфейс на C#, HTML и CSS
+
 </script></section>
-    
+
 <section data-markdown><script type="text/template">
-## Что это
 
-Фреймворк для разработки веб-клиентов на C#, HTML и CSS
+## Режимы Blazor
 
-***
+- **Static SSR** — сервер отдаёт готовый HTML, без интерактива.
+- **Interactive Server** — события UI идут на сервер, изменения DOM возвращаются через SignalR.
+- **Interactive WebAssembly** — .NET работает в браузере.
+- **Interactive Auto** — серверный старт, затем WebAssembly.
 
-## Зачем
+На практике задания мы используем Blazor Server как ещё один клиент SignalR.
 
-Чтобы разрабатывать интерактивные веб-приложения на C#
+</script></section>
 
-***
+<section data-markdown><script type="text/template">
 
-## Особенности
-Три вида рендеринга:
-- статический (вставка готового кода в HTML без интерактивности);
-- серверный (для получения команд использует SignalR);
-- клиентский (использует WebAssembly, тянет .NET Runtime к клиенту).
+## Что сегодня должно остаться в голове
 
-Можно использовать все библиотеки, доступные для C#.
+1. HTTP отвечает на запрос, SignalR доставляет события.
+2. Hub — удобный контракт вызовов клиент ↔ сервер.
+3. WebSocket предпочтителен, но SignalR умеет fallback.
+4. В реальном приложении важны адресаты, права и сохранение данных.
 
-***
-
-## Компоненты
-
-Содержат разметку и код в одном файле
-```cs
-<div class="card" style="width:22rem">
-    <div class="card-body">
-        <h3 class="card-title">@Title</h3>
-        <p class="card-text">@ChildContent</p>
-        <button @onclick="OnYes">Yes!</button>
-    </div>
-</div>
-
-@code {
-    [Parameter]
-    public RenderFragment ChildContent { get; set; }
-
-    [Parameter]
-    public string Title { get; set; }
-
-    private void OnYes()
-    {
-        Console.WriteLine("Write to the console in C#! 'Yes' button selected.");
-    }
-}
-```
+**Практика:** превратим комментарии BadNews в real-time UI.
 
 </script></section>
 
